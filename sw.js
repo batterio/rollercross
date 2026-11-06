@@ -1,5 +1,5 @@
 // Offline cache: bump CACHE when you change any file so phones fetch the new version.
-const CACHE = 'laptimer-v7';
+const CACHE = 'laptimer-v8';
 const FILES = ['./', 'index.html', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png', 'icon-maskable-512.png'];
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)));

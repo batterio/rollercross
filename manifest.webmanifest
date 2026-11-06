@@ -1,7 +1,7 @@
 {
   "id": "./",
   "name": "RollerCross Lap Timer",
-  "short_name": "Lap Timer",
+  "short_name": "RollerCross",
   "description": "Lap timer for roller riders",
   "start_url": "./",
   "scope": "./",
