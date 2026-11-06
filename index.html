@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#111827">
+<link rel="manifest" href="manifest.webmanifest"><link rel="icon" href="icon.svg"><link rel="apple-touch-icon" href="icon-192.png">
+<title>RollerCross Lap Timer</title>
+<style>
+:root{--bg:#f3f4f6;--card:#fff;--fg:#111827;--mut:#6b7280;--line:#d1d5db;--pri:#2563eb;--ok:#16a34a;--warn:#f59e0b;--bad:#dc2626;color-scheme:light}
+@media(prefers-color-scheme:dark){:root{--bg:#0b1020;--card:#1f2937;--fg:#f9fafb;--mut:#9ca3af;--line:#374151;color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px system-ui,-apple-system,sans-serif;padding-top:env(safe-area-inset-top)}
+header{text-align:center;font-weight:800;font-size:1.9rem;line-height:1.2;padding:16px 8px 4px}
+main{max-width:640px;margin:0 auto;padding:8px 14px 130px}
+h3{margin:20px 0 8px}
+button,select,input:not([type=checkbox]){width:100%;min-height:3.2rem;font:inherit;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--fg);padding:0 12px;margin:6px 0}
+button{font-weight:600;cursor:pointer}
+button:disabled{opacity:.4}
+button.pri{background:var(--pri);border-color:var(--pri);color:#fff}
+button.bad{background:var(--bad);border-color:var(--bad);color:#fff}
+button.warn{background:var(--warn);border-color:var(--warn);color:#fff;font-size:1.6rem}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.row2.p{grid-template-columns:3fr 1fr}
+.clock{font:800 3rem/1.1 ui-monospace,Menlo,monospace;text-align:center;background:#1f2937;color:#fff;border-radius:14px;padding:20px 0;margin:10px 0}
+.note,.mut{color:var(--mut)}
+button.stop{min-height:34vh;font-size:3rem;font-weight:800;letter-spacing:.05em;background:var(--bad);border:0;color:#fff;border-radius:20px;margin:10px 0}
+button.stop:active{filter:brightness(.8)}
+.ko{background:#6b7280;color:#fff;border-radius:12px;padding:12px;margin:10px 0}
+.ok{background:var(--ok);color:#fff;border-radius:12px;padding:12px;margin:10px 0}
+table{width:100%;border-collapse:collapse;background:var(--card);border-radius:12px;overflow:hidden;margin:8px 0}
+th,td{padding:10px;text-align:left;border-bottom:1px solid var(--line)}
+details{background:var(--card);border-radius:12px;padding:12px;margin:8px 0}
+summary{font-weight:600}
+.trow{display:grid;grid-template-columns:3fr 1fr;align-items:center;gap:10px}
+.chk{display:flex;gap:10px;align-items:center;padding:8px 0}
+.chk input{width:22px;height:22px}
+.race{background:#111827;color:#fff;border-radius:14px;padding:14px;margin-top:10px}
+.race .clock{background:none;padding:6px 0}
+.rrow{display:flex;justify-content:space-between;padding:12px 14px;margin-top:8px;border-radius:10px;background:#1f2937;font-variant-numeric:tabular-nums}
+.rrow.soon{background:#b45309}.rrow.go{background:#16a34a;font-weight:800}
+nav{position:fixed;bottom:0;left:0;right:0;display:flex;background:var(--card);border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom)}
+nav button{flex:1;border:0;border-radius:0;margin:0;min-height:4.6rem;background:none;font-size:.95rem;font-weight:500;color:var(--mut);padding:6px 0}
+nav button b{display:block;font-size:2rem;line-height:1.15;font-weight:400}
+nav button.on{color:var(--pri);font-weight:700}
+</style></head><body>
+<header>RollerCross Lap Timer</header>
+<main id="app"></main>
+<nav>
+<button data-t="timer"><b>⏱</b>Timer</button><button data-t="rank"><b>🏆</b>Ranking</button><button data-t="race"><b>🏁</b>Race</button><button data-t="riders"><b>👥</b>Riders</button><button data-t="settings"><b>⚙</b>Settings</button>
+</nav>
+<script>
+const $=s=>document.querySelector(s),
+esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),
+fmt=n=>n.toFixed(2), fresh=()=>({riders:{},settings:{countdown:3,penalty:1}});
+let S; try{S=JSON.parse(localStorage.getItem('rc'))}catch(e){}
+S=S&&S.riders&&S.settings?S:fresh();
+const save=()=>{try{localStorage.setItem('rc',JSON.stringify(S))}catch(e){}};
+let tab='timer',run=null,msg='',msgC='ok',cdIv=null,rmsg='',ctx=null,cdBusy=false,raceTimer=null,raceSel=null,selRider='',openR=new Set();
+
+/* ---- audio / vibration (audio context is created inside a tap, as mobile browsers require) ---- */
+function audio(){ctx=ctx||new(window.AudioContext||window.webkitAudioContext)();ctx.resume()}
+function beep(f,d){if(!ctx)return;const o=ctx.createOscillator(),g=ctx.createGain();o.type='square';o.frequency.value=f;g.gain.value=.25;o.connect(g);g.connect(ctx.destination);o.start();o.stop(ctx.currentTime+d)}
+const vib=ms=>{try{navigator.vibrate&&navigator.vibrate(ms)}catch(e){}};
+
+/* ---- timer ---- */
+function start(){if(run||!selRider)return;run={rider:selRider,t0:performance.now(),pen:0};msg='';render()}
+function stop(){if(!run||performance.now()-run.t0<700)return;const raw=(performance.now()-run.t0)/1000,fin=Math.round((raw+run.pen*S.settings.penalty)*100)/100;
+ (S.riders[run.rider]=S.riders[run.rider]||[]).push(fin);save();
+ msg=`<b>${esc(run.rider)}</b>: ${fmt(fin)} seconds saved`+(run.pen?` (${fmt(raw)} s + ${run.pen} penalt${run.pen==1?'y':'ies'})`:'');msgC='ok';run=null;render()}
+function abort(){if(run){if(!confirm('Abort this race? The time will not be saved.'))return;run=null}else if(cdBusy){clearInterval(cdIv);cdBusy=false}else return;msg='Race aborted – no time saved.';msgC='ko';render()}
+function countdownStart(){if(run||cdBusy||!selRider)return;audio();cdBusy=true;msg='';render();
+ const n=S.settings.countdown,t0=performance.now();let shown=0;
+ cdIv=setInterval(()=>{const el=(performance.now()-t0)/1000;
+  if(el<n){const k=n-Math.floor(el);if(k!==shown){shown=k;beep(600,.15);vib(60);const b=$('#cd');if(b){b.textContent=k;b.className='warn'}}}
+  else{clearInterval(cdIv);beep(1200,.7);vib(300);cdBusy=false;start()}},20)}
+setInterval(()=>{const c=$('#clock');if(c&&run)c.textContent=fmt((performance.now()-run.t0)/1000)},30);
+
+/* ---- race ---- */
+function racePlan(){const names=Object.keys(S.riders).filter(n=>S.riders[n].length).sort();
+ raceSel=new Set([...(raceSel||names)].filter(n=>names.includes(n)));
+ const sel=names.filter(n=>raceSel.has(n)),best=Object.fromEntries(sel.map(n=>[n,Math.min(...S.riders[n])])),slow=Math.max(...Object.values(best));
+ return{names,plan:sel.map(n=>({name:n,time:best[n],delay:Math.round((slow-best[n])*100)/100})).sort((a,b)=>a.delay-b.delay||a.name.localeCompare(b.name))}}
+function startRace(){audio();clearInterval(raceTimer);const{plan}=racePlan(),lead=S.settings.countdown,maxT=Math.max(...plan.map(r=>r.time)),
+ t0=performance.now()+lead*1000,fired=plan.map(()=>0),ticks={};
+ raceTimer=setInterval(()=>{const now=performance.now(),ts=(t0-now)/1000,big=$('#rbig'),sub=$('#rsub');if(!big){clearInterval(raceTimer);return}
+  if(ts>0){const n=Math.ceil(ts);big.textContent=n;sub.textContent='Get ready…';if(!ticks[n]){ticks[n]=1;beep(500,.12)}}
+  else{const left=maxT+ts;big.textContent=(-ts).toFixed(1);sub.textContent=left>0?'Finish in '+left.toFixed(1)+' s':'🏁 FINISH!'}
+  plan.forEach((r,i)=>{const rem=(t0+r.delay*1000-now)/1000,row=$('#rr'+i);if(!row)return;
+   if(rem>0){row.className='rrow'+(rem<3?' soon':'');row.lastChild.textContent='in '+rem.toFixed(1)+' s'}
+   else{row.className='rrow go';row.lastChild.textContent='GO!';if(!fired[i]){fired[i]=1;beep(1000,.6);vib(300)}}});
+  if(now>t0+maxT*1000+3000)clearInterval(raceTimer)},25)}
+
+/* ---- views ---- */
+function vTimer(){const names=Object.keys(S.riders).sort();
+ if(!names.length)return'<p class="note">Add a rider in the Riders tab to get started.</p>';
+ if(!names.includes(selRider))selRider=names[0];const p=S.settings.penalty;
+ return`<label class="mut">Rider<select id="sel" ${run||cdBusy?'disabled':''}>${names.map(n=>`<option ${n===selRider?'selected':''}>${esc(n)}</option>`).join('')}</select></label>`+
+ (run?`<p class="mut">Timing <b>${esc(run.rider)}</b>…</p><div id="clock" class="clock">${fmt((performance.now()-run.t0)/1000)}</div>
+<button class="stop" data-a="stop">■ STOP</button>
+<div class="row2 p"><button data-a="pen">⚠ Penalties</button><button data-a="unpen" ${run.pen?'':'disabled'}>↩</button></div>
+<p><b>Penalties: ${run.pen}</b> · +${(run.pen*p).toFixed(1)} s (added when you press Stop)</p>
+<button class="bad" data-a="abort">✖ Abort race</button>`
+ :`<button class="pri" data-a="start" ${cdBusy?'disabled':''}>▶ Start</button>
+<button id="cd" data-a="cd">⏳ Start with ${S.settings.countdown} seconds countdown</button>`+(cdBusy?'<button class="bad" data-a="abort">✖ Abort</button>':''))+
+ (msg?`<div class="${msgC}">${msg}</div>`:'')}
+function vRank(){const rows=Object.entries(S.riders).filter(([,t])=>t.length).map(([n,t])=>({n,b:Math.min(...t),a:t.reduce((x,y)=>x+y,0)/t.length,c:t.length})).sort((x,y)=>x.b-y.b);
+ if(!rows.length)return'<p class="note">No times recorded yet.</p>';
+ return`<table><tr><th>#</th><th>Rider</th><th>Best (s)</th><th>Avg (s)</th><th>Runs</th></tr>${rows.map((r,i)=>`<tr><td>${['🥇','🥈','🥉'][i]||i+1}</td><td>${esc(r.n)}</td><td>${fmt(r.b)}</td><td>${fmt(r.a)}</td><td>${r.c}</td></tr>`).join('')}</table>`}
+function vRace(){const{names,plan}=racePlan(),intro='<p class="note">Each rider starts at a different moment (based on their best time) so that everyone finishes together. A sound plays at every start.</p>';
+ if(names.length<2)return intro+'<p class="note">You need at least 2 riders with a recorded time.</p>';
+ const h=intro+'<h3>Riders in the race</h3>'+names.map(n=>`<label class="chk"><input type="checkbox" data-r="${esc(n)}" ${raceSel.has(n)?'checked':''}> ${esc(n)}</label>`).join('');
+ if(plan.length<2)return h+'<p class="note">Select at least 2 riders.</p>';
+ return h+`<table><tr><th>Start</th><th>Rider</th><th>Best (s)</th><th>After (s)</th></tr>${plan.map((r,i)=>`<tr><td>${i+1}</td><td>${esc(r.name)}</td><td>${fmt(r.time)}</td><td>${fmt(r.delay)}</td></tr>`).join('')}</table>
+<div class="race"><div class="row2"><button class="pri" data-a="rgo">▶ START</button><button class="bad" data-a="rabort">✖ ABORT</button></div><div id="rbig" class="clock">–</div><div id="rsub" class="mut" style="text-align:center">Ready</div>
+${plan.map((r,i)=>`<div class="rrow" id="rr${i}"><span>${esc(r.name)}</span><span>–</span></div>`).join('')}</div>`}
+function vRiders(){const names=Object.keys(S.riders).sort();
+ return`<h3>Add a rider</h3><form id="addf"><input id="nn" placeholder="e.g. Rider A" autocomplete="off"><button class="pri">➕ Add rider</button></form>${rmsg?`<p class="note">${rmsg}</p>`:''}`+
+ (names.length?'<h3>Recorded times</h3>'+names.map(n=>{const t=S.riders[n];
+  return`<details data-n="${esc(n)}" ${openR.has(n)?'open':''}><summary>${esc(n)} · ${t.length} run${t.length!=1?'s':''}</summary>${t.length?t.map((x,i)=>`<div class="trow"><b>${fmt(x)} s</b><button data-a="dt" data-n="${esc(n)}" data-i="${i}">🗑</button></div>`).join(''):'<p class="note">No times yet.</p>'}</details>`}).join('')+
+  `<h3>Remove a rider</h3><select id="rmsel">${names.map(n=>`<option>${esc(n)}</option>`).join('')}</select>
+<label class="chk"><input type="checkbox" data-c="#rmb"> Yes, delete this rider and all their times</label><button id="rmb" class="bad" data-a="rm" disabled>🗑 Remove rider</button>`:'')}
+function vSet(){return`<h3>Race settings</h3>
+<label class="mut">Countdown duration (seconds)<input id="s-cd" type="number" min="1" max="10" step="1" value="${S.settings.countdown}"></label>
+<label class="mut">Penalty duration (seconds)<input id="s-pen" type="number" min="0" max="60" step="0.5" value="${S.settings.penalty}"></label>
+<h3>Reset</h3><p class="note">Deletes all riders and recorded times and restores the default settings. This cannot be undone.</p>
+<label class="chk"><input type="checkbox" data-c="#rsb"> Yes, I want to erase everything</label><button id="rsb" class="bad" data-a="reset" disabled>🗑 Reset</button>`}
+
+function render(){clearInterval(raceTimer);
+ $('#app').innerHTML={timer:vTimer,rank:vRank,race:vRace,riders:vRiders,settings:vSet}[tab]();
+ document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('on',b.dataset.t===tab))}
+
+/* ---- events ---- */
+document.querySelector('nav').addEventListener('click',e=>{const b=e.target.closest('[data-t]');if(b){tab=b.dataset.t;render()}});
+$('#app').addEventListener('click',e=>{const b=e.target.closest('[data-a]');if(!b||b.disabled)return;const a=b.dataset.a;
+ if(a==='start')start();else if(a==='stop')stop();else if(a==='cd')countdownStart();
+ else if(a==='pen'&&run){run.pen++;render()}else if(a==='unpen'&&run&&run.pen){run.pen--;render()}
+ else if(a==='rgo')startRace();else if(a==='rabort')render();else if(a==='abort')abort();
+ else if(a==='dt'){S.riders[b.dataset.n].splice(+b.dataset.i,1);save();render()}
+ else if(a==='rm'){delete S.riders[$('#rmsel').value];save();render()}
+ else if(a==='reset'){try{localStorage.removeItem('rc')}catch(x){}S=fresh();run=null;msg=rmsg='';selRider='';raceSel=null;openR.clear();render()}});
+$('#app').addEventListener('change',e=>{const t=e.target;
+ if(t.id==='sel')selRider=t.value;
+ else if(t.dataset.r){t.checked?raceSel.add(t.dataset.r):raceSel.delete(t.dataset.r);render()}
+ else if(t.dataset.c)$(t.dataset.c).disabled=!t.checked;
+ else if(t.id==='s-cd'){S.settings.countdown=Math.min(10,Math.max(1,parseInt(t.value)||3));save();render()}
+ else if(t.id==='s-pen'){S.settings.penalty=Math.min(60,Math.max(0,parseFloat(t.value)||0));save();render()}});
+$('#app').addEventListener('submit',e=>{if(e.target.id!=='addf')return;e.preventDefault();const n=$('#nn').value.trim();
+ if(!n)rmsg='Please enter a name.';else if(Object.prototype.hasOwnProperty.call(S.riders,n))rmsg=`“${esc(n)}” already exists.`;else{S.riders[n]=[];save();rmsg=''}render()});
+document.addEventListener('toggle',e=>{const d=e.target;if(d.tagName==='DETAILS')d.open?openR.add(d.dataset.n):openR.delete(d.dataset.n)},true);
+
+render();
+if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
+</script></body></html>
